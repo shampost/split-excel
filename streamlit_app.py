@@ -4,12 +4,15 @@ from io import BytesIO
 from zipfile import ZipFile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Initialize session state
+# Initialize session state if not already initialized
 if 'processed' not in st.session_state:
     st.session_state.processed = False
+if 'zip_buffer' not in st.session_state:
     st.session_state.zip_buffer = None
-    st.session_state.last_row_count = None  # Store the last row count used
-    st.session_state.uploaded_file_name = None  # To track file changes
+if 'last_row_count' not in st.session_state:
+    st.session_state.last_row_count = None
+if 'uploaded_file_name' not in st.session_state:
+    st.session_state.uploaded_file_name = None  # Initialize uploaded file name
 
 # App title
 st.title("Excel/CSV File Splitter")
@@ -107,7 +110,7 @@ if file is not None:
 if st.session_state.processed:
     st.download_button(
         label="Download All Split Files",
-        data=st.session_state.zip_buffer,
+        data=st.session_state.zip_buffer.getvalue(),
         file_name="split_files.zip",
-        mime="application/zip"
+        mime='application/zip'
     )
