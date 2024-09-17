@@ -32,12 +32,26 @@ if file is not None:
     try:
         # Read the file (auto-detect if it's CSV or Excel) using chunks to save memory
         if file.name.endswith('.csv'):
-            file_iterator = pd.read_csv(file, chunksize=100000, low_memory=False)
+            file_iterator = pd.read_csv(file, chunksize=row_count_split, low_memory=False)
+        else:
+            file_iterator = pd.read_excel(file, chunksize=row_count_split)
+
+        # Count rows to calculate the number of files
+        total_rows = sum([len(chunk) for chunk in file_iterator])
+        num_files = (total_rows + row_count_split - 1) // row_count_split
+
+        st.write(f"Number of files to be created: {num_files}")
+
+        # Reset the file iterator to start again
+        if file.name.endswith('.csv'):
+            file_iterator = pd.read_csv(file, chunksize=row_count_split, low_memory=False)
         else:
             file_iterator = pd.read_excel(file, chunksize=row_count_split)
 
         # Create a ZIP file in memory, writing chunks directly to it
         zip_buffer = BytesIO()
+        progress_bar = st.progress(0)
+
         with ZipFile(zip_buffer, 'w') as zip_file:
             for i, chunk in enumerate(file_iterator):
                 # Filter out empty rows in each chunk
@@ -49,6 +63,9 @@ if file is not None:
                 chunk.to_csv(buffer, index=False)
                 buffer.seek(0)
                 zip_file.writestr(f'split_file_{i+1}.csv', buffer.getvalue())
+
+                # Update progress bar
+                progress_bar.progress((i + 1) / num_files)
 
         zip_buffer.seek(0)
 
