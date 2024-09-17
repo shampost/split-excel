@@ -9,6 +9,7 @@ if 'processed' not in st.session_state:
     st.session_state.processed = False
     st.session_state.zip_buffer = None
     st.session_state.last_row_count = None  # Store the last row count used
+    st.session_state.uploaded_file_name = None  # To track file changes
 
 # App title
 st.title("Excel/CSV File Splitter")
@@ -17,9 +18,16 @@ st.title("Excel/CSV File Splitter")
 file = st.file_uploader("Choose a CSV or Excel file", type=['csv', 'xlsx'])
 
 if file is not None:
+    # Check if the uploaded file is different from the previous one
+    if st.session_state.uploaded_file_name != file.name:
+        # Reset session state if a new file is uploaded
+        st.session_state.processed = False
+        st.session_state.zip_buffer = None
+        st.session_state.uploaded_file_name = file.name
+
     # Load the entire file into memory to avoid issues with file reading in chunks
     file_bytes = file.read()
-    
+
     # Prompt for desired row count
     row_count_split = st.number_input(
         "Enter the number of rows to split the file by", min_value=1, value=800000, key="row_count"
@@ -35,7 +43,7 @@ if file is not None:
     try:
         # Use BytesIO to create an in-memory buffer to read the file multiple times
         file_buffer = BytesIO(file_bytes)
-        
+
         # Read the file (auto-detect if it's CSV or Excel) using chunks to save memory
         if file.name.endswith('.csv'):
             file_iterator = pd.read_csv(file_buffer, chunksize=row_count_split)
@@ -46,13 +54,13 @@ if file is not None:
         total_rows = 0
         for chunk in file_iterator:
             total_rows += len(chunk)
-        
+
         num_files = (total_rows + row_count_split - 1) // row_count_split
         st.write(f"Number of files to be created: {num_files}")
 
         # Reset the file iterator to start processing the chunks again
         file_buffer.seek(0)  # Reset buffer position to the beginning
-        
+
         if file.name.endswith('.csv'):
             file_iterator = pd.read_csv(file_buffer, chunksize=row_count_split)
         else:
@@ -77,7 +85,7 @@ if file is not None:
                     futures = []
                     for i, chunk in enumerate(file_iterator):
                         futures.append(executor.submit(process_chunk, i, chunk))
-                    
+
                     # Process the chunks and update the progress bar
                     for i, future in enumerate(as_completed(futures)):
                         filename, data = future.result()
