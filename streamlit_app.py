@@ -17,6 +17,9 @@ st.title("Excel/CSV File Splitter")
 file = st.file_uploader("Choose a CSV or Excel file", type=['csv', 'xlsx'])
 
 if file is not None:
+    # Load the entire file into memory to avoid issues with file reading in chunks
+    file_bytes = file.read()
+    
     # Prompt for desired row count
     row_count_split = st.number_input(
         "Enter the number of rows to split the file by", min_value=1, value=800000, key="row_count"
@@ -30,11 +33,14 @@ if file is not None:
     st.session_state.last_row_count = row_count_split  # Update the last row count
 
     try:
+        # Use BytesIO to create an in-memory buffer to read the file multiple times
+        file_buffer = BytesIO(file_bytes)
+        
         # Read the file (auto-detect if it's CSV or Excel) using chunks to save memory
         if file.name.endswith('.csv'):
-            file_iterator = pd.read_csv(file, chunksize=row_count_split)
+            file_iterator = pd.read_csv(file_buffer, chunksize=row_count_split)
         else:
-            file_iterator = pd.read_excel(file, chunksize=row_count_split)
+            file_iterator = pd.read_excel(file_buffer, chunksize=row_count_split)
 
         # Calculate the number of rows and files to be created
         total_rows = 0
@@ -45,10 +51,12 @@ if file is not None:
         st.write(f"Number of files to be created: {num_files}")
 
         # Reset the file iterator to start processing the chunks again
+        file_buffer.seek(0)  # Reset buffer position to the beginning
+        
         if file.name.endswith('.csv'):
-            file_iterator = pd.read_csv(file, chunksize=row_count_split)
+            file_iterator = pd.read_csv(file_buffer, chunksize=row_count_split)
         else:
-            file_iterator = pd.read_excel(file, chunksize=row_count_split)
+            file_iterator = pd.read_excel(file_buffer, chunksize=row_count_split)
 
         # Add a button to confirm and start processing
         if st.button("Confirm and Split File"):
