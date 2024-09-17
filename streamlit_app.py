@@ -36,58 +36,25 @@ if file is not None:
         else:
             file_iterator = pd.read_excel(file, chunksize=row_count_split)
 
-        chunks = []
-        for chunk in file_iterator:
-            # Filter out empty rows in each chunk
-            chunk = chunk.dropna(how='all')  # Drop rows where all values are NaN
-            chunk = chunk[(chunk != '').any(axis=1)]  # Remove rows with empty strings
-            chunks.append(chunk)
+        # Create a ZIP file in memory, writing chunks directly to it
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, 'w') as zip_file:
+            for i, chunk in enumerate(file_iterator):
+                # Filter out empty rows in each chunk
+                chunk = chunk.dropna(how='all')  # Drop rows where all values are NaN
+                chunk = chunk[(chunk != '').any(axis=1)]  # Remove rows with empty strings
 
-        # Concatenate all chunks into a single DataFrame
-        non_empty_df = pd.concat(chunks)
-
-        # Recalculate the number of rows and files after filtering
-        row_count = non_empty_df.shape[0]
-        num_files = (row_count + row_count_split - 1) // row_count_split
-        if num_files == 0:
-            num_files = 1  # Ensure at least one file is created
-
-        st.write(f"Number of files to be created: {num_files}")
-
-        # Add a button to confirm and start processing
-        if st.button("Confirm and Split File"):
-            st.write("Splitting file... this might take some time")
-            progress_bar = st.progress(0)
-
-            def process_chunk(i, chunk_df):
+                # Write the chunk directly to the ZIP file as a CSV
                 buffer = BytesIO()
-                # Write each chunk to CSV for smaller size and memory usage
-                chunk_df.to_csv(buffer, index=False)
+                chunk.to_csv(buffer, index=False)
                 buffer.seek(0)
-                return f"split_file_{i+1}.csv", buffer.getvalue()
+                zip_file.writestr(f'split_file_{i+1}.csv', buffer.getvalue())
 
-            # Create a ZIP file in memory
-            zip_buffer = BytesIO()
-            with ZipFile(zip_buffer, 'w') as zip_file:
-                with ThreadPoolExecutor() as executor:
-                    futures = []
-                    for i in range(0, non_empty_df.shape[0], row_count_split):
-                        chunk_df = non_empty_df.iloc[i:i + row_count_split]
-                        futures.append(executor.submit(process_chunk, i // row_count_split, chunk_df))
-                    
-                    # Recalculate the number of files based on valid chunks
-                    num_files = len(futures)
+        zip_buffer.seek(0)
 
-                    for i, future in enumerate(as_completed(futures)):
-                        filename, data = future.result()
-                        zip_file.writestr(filename, data)
-                        progress_bar.progress((i + 1) / num_files)
-
-            zip_buffer.seek(0)
-
-            # Store the ZIP file in session state
-            st.session_state.processed = True
-            st.session_state.zip_buffer = zip_buffer
+        # Store the ZIP file in session state
+        st.session_state.processed = True
+        st.session_state.zip_buffer = zip_buffer
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
