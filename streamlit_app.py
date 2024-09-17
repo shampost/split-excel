@@ -17,7 +17,7 @@ if 'uploaded_file_name' not in st.session_state:
 st.title("CSV File Splitter")
 
 # File uploader
-file = st.file_uploader("Choose a CSV file", type=['csv', 'xlsx'])
+file = st.file_uploader("Choose a CSV file", type=['csv'])
 
 if file is not None:
     # Check if the uploaded file is different from the previous one
