@@ -39,12 +39,19 @@ if file is not None:
 
     st.session_state.last_row_count = row_count_split  # Update the last row count
 
+    # Prompt for encoding
+    common_encodings = ['utf-8', 'latin-1', 'utf-16', 'cp1252', 'ascii', 'utf-8-sig', 'Other']
+    selected_encoding = st.selectbox("Select the encoding of the CSV file", common_encodings)
+
+    if selected_encoding == 'Other':
+        selected_encoding = st.text_input("Enter the encoding of the CSV file", value='utf-8')
+
+    if not selected_encoding:
+        selected_encoding = 'utf-8'  # default encoding
+
     try:
-        # Estimate the number of files
-        total_rows = sum(1 for _ in file) - 1  # Subtract 1 for the header row
-        file.seek(0)  # Reset file pointer
-        num_files = (total_rows + row_count_split - 1) // row_count_split
-        st.write(f"Number of files to be created: {num_files}")
+        # Since we cannot estimate the number of files without reading the entire file,
+        # we proceed directly to splitting the file.
 
         # Add a button to confirm and start processing
         if st.button("Confirm and Split File"):
@@ -53,15 +60,20 @@ if file is not None:
 
             zip_buffer = BytesIO()
             with ZipFile(zip_buffer, 'w') as zip_file:
-                reader = pd.read_csv(file, chunksize=row_count_split)
+                reader = pd.read_csv(file, chunksize=row_count_split, encoding=selected_encoding)
+                total_chunks = 0
                 for i, chunk in enumerate(reader):
                     buffer = BytesIO()
-                    chunk.to_csv(buffer, index=False)
+                    chunk.to_csv(buffer, index=False, encoding=selected_encoding)
                     buffer.seek(0)
                     filename = f"split_file_{i+1}.csv"
                     zip_file.writestr(filename, buffer.getvalue())
-                    progress_bar.progress((i + 1) / num_files)
-            zip_buffer.seek(0)
+                    total_chunks = i + 1
+                    # Update progress bar (optional)
+                    progress_bar.progress(0)
+                zip_buffer.seek(0)
+
+            st.write(f"Number of files created: {total_chunks}")
 
             # Store the ZIP file in session state
             st.session_state.processed = True
