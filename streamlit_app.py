@@ -39,16 +39,6 @@ if file is not None:
 
     st.session_state.last_row_count = row_count_split  # Update the last row count
 
-    # Prompt for encoding
-    common_encodings = ['utf-8', 'latin-1', 'utf-16', 'cp1252', 'ascii', 'utf-8-sig', 'Other']
-    selected_encoding = st.selectbox("Select the encoding of the CSV file", common_encodings)
-
-    if selected_encoding == 'Other':
-        selected_encoding = st.text_input("Enter the encoding of the CSV file", value='utf-8')
-
-    if not selected_encoding:
-        selected_encoding = 'utf-8'  # default encoding
-
     try:
         # Since we cannot estimate the number of files without reading the entire file,
         # we proceed directly to splitting the file.
@@ -60,11 +50,11 @@ if file is not None:
 
             zip_buffer = BytesIO()
             with ZipFile(zip_buffer, 'w') as zip_file:
-                reader = pd.read_csv(file, chunksize=row_count_split, encoding=selected_encoding)
+                reader = pd.read_csv(file, chunksize=row_count_split)
                 total_chunks = 0
                 for i, chunk in enumerate(reader):
                     buffer = BytesIO()
-                    chunk.to_csv(buffer, index=False, encoding=selected_encoding)
+                    chunk.to_csv(buffer, index=False)
                     buffer.seek(0)
                     filename = f"split_file_{i+1}.csv"
                     zip_file.writestr(filename, buffer.getvalue())
