@@ -17,7 +17,7 @@ if 'uploaded_file_name' not in st.session_state:
 st.title("CSV File Splitter")
 
 # File uploader
-file = st.file_uploader("Choose a CSV file - Larger files may take longer to load.", type=['csv'])
+file = st.file_uploader("Choose a CSV file - WARNING: Large Files May Take Longer to Load.", type=['csv'])
 
 if file is not None:
     # Check if the uploaded file is different from the previous one
@@ -40,8 +40,11 @@ if file is not None:
     st.session_state.last_row_count = row_count_split  # Update the last row count
 
     try:
-        # Since we cannot estimate the number of files without reading the entire file,
-        # we proceed directly to splitting the file.
+        # Estimate the number of files
+        total_rows = sum(1 for _ in file) - 1  # Subtract 1 for the header row
+        file.seek(0)  # Reset file pointer
+        num_files = (total_rows + row_count_split - 1) // row_count_split
+        st.write(f"Number of files to be created: {num_files}")
 
         # Add a button to confirm and start processing
         if st.button("Confirm and Split File"):
@@ -51,19 +54,14 @@ if file is not None:
             zip_buffer = BytesIO()
             with ZipFile(zip_buffer, 'w') as zip_file:
                 reader = pd.read_csv(file, chunksize=row_count_split)
-                total_chunks = 0
                 for i, chunk in enumerate(reader):
                     buffer = BytesIO()
                     chunk.to_csv(buffer, index=False)
                     buffer.seek(0)
                     filename = f"split_file_{i+1}.csv"
                     zip_file.writestr(filename, buffer.getvalue())
-                    total_chunks = i + 1
-                    # Update progress bar (optional)
-                    progress_bar.progress(0)
-                zip_buffer.seek(0)
-
-            st.write(f"Number of files created: {total_chunks}")
+                    progress_bar.progress((i + 1) / num_files)
+            zip_buffer.seek(0)
 
             # Store the ZIP file in session state
             st.session_state.processed = True
