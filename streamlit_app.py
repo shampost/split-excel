@@ -55,7 +55,7 @@ if file is not None:
         result = chardet.detect(sample)
         detected_encoding = result['encoding']
         confidence = result['confidence']
-        st.write(f"Detected file encoding: {detected_encoding} with confidence {confidence*100:.2f}%")
+        # st.write(f"Detected file encoding: {detected_encoding} with confidence {confidence*100:.2f}%")
 
         # If confidence is low or encoding is None, set a default encoding
         if confidence < 0.8 or detected_encoding is None:
@@ -75,7 +75,7 @@ if file is not None:
         dialect = sniffer.sniff(sample_str)
 
         delimiter = dialect.delimiter
-        st.write(f"Detected delimiter: '{delimiter}'")
+        # st.write(f"Detected delimiter: '{delimiter}'")
 
         # Estimate the number of files
         file.seek(0)
