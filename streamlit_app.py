@@ -1,7 +1,9 @@
 import pandas as pd
 import streamlit as st
-from io import BytesIO
+from io import BytesIO, StringIO
 from zipfile import ZipFile
+import chardet
+import csv
 
 # Initialize session state if not already initialized
 if 'processed' not in st.session_state:
@@ -29,7 +31,10 @@ if file is not None:
 
     # Prompt for desired row count
     row_count_split = st.number_input(
-        "Enter the number of rows to split the file by", min_value=1, value=800000, key="row_count"
+        "Enter the number of rows to split the file by",
+        min_value=1,
+        value=800000,
+        key="row_count"
     )
 
     # Reset session state if a new row count is entered
@@ -40,7 +45,40 @@ if file is not None:
     st.session_state.last_row_count = row_count_split  # Update the last row count
 
     try:
+        # Read a sample to detect encoding and CSV format
+        file.seek(0)
+        sample_size = 100000  # Read first 100 KB for encoding detection and format sniffing
+        sample = file.read(sample_size)
+        file.seek(0)  # Reset file pointer after reading sample
+
+        # Detect encoding
+        result = chardet.detect(sample)
+        detected_encoding = result['encoding']
+        confidence = result['confidence']
+        st.write(f"Detected file encoding: {detected_encoding} with confidence {confidence*100:.2f}%")
+
+        # If confidence is low or encoding is None, set a default encoding
+        if confidence < 0.8 or detected_encoding is None:
+            st.warning("Low confidence in detected encoding. Using 'utf-8' as default.")
+            detected_encoding = 'utf-8'
+
+        # Decode sample for CSV sniffer
+        try:
+            sample_str = sample.decode(detected_encoding)
+        except UnicodeDecodeError:
+            st.warning("Failed to decode sample with detected encoding. Using 'utf-8' as default.")
+            detected_encoding = 'utf-8'
+            sample_str = sample.decode(detected_encoding, errors='replace')
+
+        # Use CSV sniffer to detect delimiter and other parameters
+        sniffer = csv.Sniffer()
+        dialect = sniffer.sniff(sample_str)
+
+        delimiter = dialect.delimiter
+        st.write(f"Detected delimiter: '{delimiter}'")
+
         # Estimate the number of files
+        file.seek(0)
         total_rows = sum(1 for _ in file) - 1  # Subtract 1 for the header row
         file.seek(0)  # Reset file pointer
         num_files = (total_rows + row_count_split - 1) // row_count_split
@@ -53,13 +91,45 @@ if file is not None:
 
             zip_buffer = BytesIO()
             with ZipFile(zip_buffer, 'w') as zip_file:
-                reader = pd.read_csv(file, chunksize=row_count_split)
+                try:
+                    reader = pd.read_csv(
+                        file,
+                        chunksize=row_count_split,
+                        encoding=detected_encoding,
+                        sep=delimiter,
+                        engine='python',  # Use python engine for better compatibility
+                        on_bad_lines='warn',
+                        dtype=str  # Read all columns as strings to preserve data
+                    )
+                except Exception as e:
+                    st.error(f"Failed to read the file: {e}")
+                    st.stop()
+
+                # Process chunks
                 for i, chunk in enumerate(reader):
                     buffer = BytesIO()
-                    chunk.to_csv(buffer, index=False)
+                    # Add BOM for UTF-16 encoding
+                    if detected_encoding.lower() in ['utf-16', 'utf-16-le', 'utf-16-be']:
+                        # Use 'utf-16' which automatically adds BOM
+                        chunk.to_csv(
+                            buffer,
+                            index=False,
+                            encoding=detected_encoding,
+                            sep=delimiter,
+                            lineterminator='\n'
+                        )
+                    else:
+                        # For other encodings
+                        chunk.to_csv(
+                            buffer,
+                            index=False,
+                            encoding=detected_encoding,
+                            sep=delimiter,
+                            lineterminator='\n'
+                        )
                     buffer.seek(0)
                     filename = f"split_file_{i+1}.csv"
-                    zip_file.writestr(filename, buffer.getvalue())
+                    zip_file.writestr(filename, buffer.read())
                     progress_bar.progress((i + 1) / num_files)
             zip_buffer.seek(0)
 
