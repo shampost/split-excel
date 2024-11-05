@@ -22,10 +22,13 @@ if 'uploaded_file_name' not in st.session_state:
     st.session_state.uploaded_file_name = None  # Initialize uploaded file name
 
 # App title
-st.title("CSV File Splitter")
+st.title("File Splitter")
 
 # File uploader
-file = st.file_uploader("Choose a CSV file - WARNING: Large Files May Take Longer to Load.", type=['csv'])
+file = st.file_uploader(
+    "Choose a CSV, XLSX, XLS, or TXT file - WARNING: Large Files May Take Longer to Load.",
+    type=['csv', 'xlsx', 'xls', 'txt']
+)
 
 if file is not None:
     # Check if the uploaded file is different from the previous one
@@ -163,10 +166,10 @@ if file is not None:
             # Read header row
             header = sheet.row_values(0)
 
-        # Add a button to confirm and start processing
-        if st.button("Confirm and Split File"):
-            st.write("Splitting file... this might take some time")
-            progress_bar = st.progress(0)
+            # Add a button to confirm and start processing
+            if st.button("Confirm and Split File"):
+                st.write("Splitting file... this might take some time")
+                progress_bar = st.progress(0)
 
                 zip_buffer = BytesIO()
                 with ZipFile(zip_buffer, 'w') as zip_file:
@@ -278,12 +281,15 @@ if file is not None:
                     zip_buffer.seek(0)
                 wb.close()
 
-            # Store the ZIP file in session state
-            st.session_state.processed = True
-            st.session_state.zip_buffer = zip_buffer
+                # Store the ZIP file in session state
+                st.session_state.processed = True
+                st.session_state.zip_buffer = zip_buffer
 
-    except Exception as e:
-        st.error(f"Error processing file: {e}")
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
+
+    else:
+        st.error("Unsupported file format")
 
 # Check if the files have been processed and display the download button
 if st.session_state.processed:
