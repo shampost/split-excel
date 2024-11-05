@@ -3,3 +3,4 @@ pandas
 chardet
 openpyxl
 xlrd
+xlwt
