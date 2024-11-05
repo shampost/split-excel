@@ -88,51 +88,61 @@ if file is not None:
 
             # Estimate the number of files
             file.seek(0)
-            reader = csv.reader((line.decode(detected_encoding) for line in file), delimiter=delimiter)
-            total_rows = sum(1 for row in reader) - 1  # Subtract 1 for the header row
+            total_rows = sum(1 for _ in file) - 1  # Subtract 1 for the header row
             file.seek(0)  # Reset file pointer
-            num_files = math.ceil(total_rows / row_count_split)
+            num_files = (total_rows + row_count_split - 1) // row_count_split
             st.write(f"Number of files to be created: {num_files}")
 
-            zip_buffer = BytesIO()
-            with ZipFile(zip_buffer, 'w') as zip_file:
-                try:
-                    reader = pd.read_csv(
-                        file,
-                        chunksize=row_count_split,
-                        encoding=detected_encoding,
-                        sep=delimiter,
-                        engine='python',  # Use python engine for better compatibility
-                        on_bad_lines='warn',
-                        dtype=str  # Read all columns as strings to preserve data
-                    )
-                except Exception as e:
-                    st.error(f"Failed to read the file: {e}")
-                    st.stop()
-
-                # Process chunks
-                progress_bar = st.progress(0)
-                total_chunks = num_files
-                for i, chunk in enumerate(reader):
+            # Add a button to confirm and start processing
+            if st.button("Confirm and Split File"):
+                st.write("Splitting file... this might take some time")
+                zip_buffer = BytesIO()
+                with ZipFile(zip_buffer, 'w') as zip_file:
                     try:
-                        buffer = BytesIO()
-                        chunk.to_csv(
-                            buffer,
-                            index=False,
+                        reader = pd.read_csv(
+                            file,
+                            chunksize=row_count_split,
                             encoding=detected_encoding,
                             sep=delimiter,
-                            lineterminator='\n'
+                            engine='python',  # Use python engine for better compatibility
+                            on_bad_lines='warn',
+                            dtype=str  # Read all columns as strings to preserve data
                         )
+                    except Exception as e:
+                        st.error(f"Failed to read the file: {e}")
+                        st.stop()
+
+                    # Process chunks
+                    progress_bar = st.progress(0)
+                    total_chunks = num_files  # Use the estimated number of files
+                    for i, chunk in enumerate(reader):
+                        buffer = BytesIO()
+                        # Add BOM for UTF-16 encoding
+                        if detected_encoding.lower() in ['utf-16', 'utf-16-le', 'utf-16-be']:
+                            # Use 'utf-16' which automatically adds BOM
+                            chunk.to_csv(
+                                buffer,
+                                index=False,
+                                encoding=detected_encoding,
+                                sep=delimiter,
+                                lineterminator='\n'
+                            )
+                        else:
+                            # For other encodings
+                            chunk.to_csv(
+                                buffer,
+                                index=False,
+                                encoding=detected_encoding,
+                                sep=delimiter,
+                                lineterminator='\n'
+                            )
                         buffer.seek(0)
                         filename = f"split_file_{i+1}{file_extension}"
                         zip_file.writestr(filename, buffer.read())
                         progress_bar.progress((i + 1) / total_chunks)
-                    except Exception as e:
-                        st.error(f"Error processing chunk {i+1}: {e}")
-                        continue  # Skip to the next chunk
-                st.session_state.processed = True
-                st.session_state.zip_buffer = zip_buffer
-            zip_buffer.seek(0)
+                    st.session_state.processed = True
+                    st.session_state.zip_buffer = zip_buffer
+                zip_buffer.seek(0)
 
         except Exception as e:
             st.error(f"Error processing file: {e}")
@@ -157,9 +167,6 @@ if file is not None:
             num_files = math.ceil(total_rows / row_count_split)
             st.write(f"Number of files to be created: {num_files}")
 
-            # Read header row
-            header = sheet.row_values(0)
-
             # Add a button to confirm and start processing
             if st.button("Confirm and Split File"):
                 st.write("Splitting file... this might take some time")
@@ -173,41 +180,38 @@ if file is not None:
                     total_rows_processed = 0
 
                     for row_idx in range(1, sheet.nrows):  # Start from 1 to skip header
-                        try:
-                            row_values = sheet.row_values(row_idx)
-                            row_buffer.append(row_values)
-                            rows_processed += 1
-                            total_rows_processed += 1
+                        row_values = sheet.row_values(row_idx)
+                        row_buffer.append(row_values)
+                        rows_processed += 1
+                        total_rows_processed += 1
 
-                            if rows_processed == row_count_split or total_rows_processed == total_rows:
-                                # Write the chunk to a new XLS file
-                                chunk_wb = xlwt.Workbook()
-                                chunk_ws = chunk_wb.add_sheet('Sheet1')
+                        if rows_processed == row_count_split or total_rows_processed == total_rows:
+                            # Write the chunk to a new XLS file
+                            chunk_wb = xlwt.Workbook()
+                            chunk_ws = chunk_wb.add_sheet('Sheet1')
 
-                                # Write header
-                                for col_num, header_value in enumerate(header):
-                                    chunk_ws.write(0, col_num, header_value)
+                            # Write header
+                            header = sheet.row_values(0)
+                            for col_num, header_value in enumerate(header):
+                                chunk_ws.write(0, col_num, header_value)
 
-                                # Write data rows
-                                for row_num, data_row in enumerate(row_buffer, start=1):
-                                    for col_num, cell_value in enumerate(data_row):
-                                        chunk_ws.write(row_num, col_num, cell_value)
+                            # Write data rows
+                            for row_num, data_row in enumerate(row_buffer, start=1):
+                                for col_num, cell_value in enumerate(data_row):
+                                    chunk_ws.write(row_num, col_num, cell_value)
 
-                                # Save to a BytesIO buffer
-                                buffer = BytesIO()
-                                chunk_wb.save(buffer)
-                                buffer.seek(0)
-                                filename = f"split_file_{file_index}{file_extension}"
-                                zip_file.writestr(filename, buffer.read())
-                                buffer.close()
-                                # Reset row buffer and counters
-                                row_buffer = []
-                                rows_processed = 0
-                                file_index += 1
-                                progress_bar.progress(file_index / (num_files + 1))
-                        except Exception as e:
-                            st.error(f"Error processing row {row_idx}: {e}")
-                            continue  # Skip to the next row
+                            # Save to a BytesIO buffer
+                            buffer = BytesIO()
+                            chunk_wb.save(buffer)
+                            buffer.seek(0)
+                            filename = f"split_file_{file_index}{file_extension}"
+                            zip_file.writestr(filename, buffer.read())
+                            buffer.close()
+                            # Reset row buffer and counters
+                            row_buffer = []
+                            rows_processed = 0
+                            file_index += 1
+                            progress_bar.progress(total_rows_processed / total_rows)
                     zip_buffer.seek(0)
                 wb.release_resources()
                 del wb  # Cleanup
@@ -234,9 +238,6 @@ if file is not None:
             num_files = math.ceil(total_rows / row_count_split)
             st.write(f"Number of files to be created: {num_files}")
 
-            # Read header row
-            header = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
-
             # Add a button to confirm and start processing
             if st.button("Confirm and Split File"):
                 st.write("Splitting file... this might take some time")
@@ -249,37 +250,36 @@ if file is not None:
                     rows_processed = 0
                     total_rows_processed = 0
 
+                    # Read header row
+                    header = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+
                     # Start from second row to skip header
                     for row in ws.iter_rows(min_row=2, values_only=True):
-                        try:
-                            row_buffer.append(row)
-                            rows_processed += 1
-                            total_rows_processed += 1
+                        row_buffer.append(row)
+                        rows_processed += 1
+                        total_rows_processed += 1
 
-                            if rows_processed == row_count_split or total_rows_processed == total_rows:
-                                # Write the chunk to a new XLSX file
-                                chunk_wb = Workbook()
-                                chunk_ws = chunk_wb.active
-                                # Write header
-                                chunk_ws.append(header)
-                                for data_row in row_buffer:
-                                    chunk_ws.append(data_row)
-                                # Save to a BytesIO buffer
-                                buffer = BytesIO()
-                                chunk_wb.save(buffer)
-                                buffer.seek(0)
-                                filename = f"split_file_{file_index}{file_extension}"
-                                zip_file.writestr(filename, buffer.read())
-                                buffer.close()
-                                chunk_wb.close()  # Close the workbook
-                                # Reset row buffer and counters
-                                row_buffer = []
-                                rows_processed = 0
-                                file_index += 1
-                                progress_bar.progress(file_index / (num_files + 1))
-                        except Exception as e:
-                            st.error(f"Error processing row {total_rows_processed}: {e}")
-                            continue  # Skip to the next row
+                        if rows_processed == row_count_split or total_rows_processed == total_rows:
+                            # Write the chunk to a new XLSX file
+                            chunk_wb = Workbook()
+                            chunk_ws = chunk_wb.active
+                            # Write header
+                            chunk_ws.append(header)
+                            for data_row in row_buffer:
+                                chunk_ws.append(data_row)
+                            # Save to a BytesIO buffer
+                            buffer = BytesIO()
+                            chunk_wb.save(buffer)
+                            buffer.seek(0)
+                            filename = f"split_file_{file_index}{file_extension}"
+                            zip_file.writestr(filename, buffer.read())
+                            buffer.close()
+                            chunk_wb.close()  # Close the workbook
+                            # Reset row buffer and counters
+                            row_buffer = []
+                            rows_processed = 0
+                            file_index += 1
+                            progress_bar.progress(total_rows_processed / total_rows)
                     zip_buffer.seek(0)
                 wb.close()
 
