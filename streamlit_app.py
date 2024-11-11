@@ -19,7 +19,7 @@ if 'zip_buffer' not in st.session_state:
 if 'last_row_count' not in st.session_state:
     st.session_state.last_row_count = None
 if 'uploaded_file_name' not in st.session_state:
-    st.session_state.uploaded_file_name = None  # Initialize uploaded file name
+    st.session_state.uploaded_file_name = None
 
 # App title
 st.title("File Splitter")
@@ -46,42 +46,81 @@ if file is not None:
         key="row_count"
     )
 
-    # Reset session state if a new row count is entered
+    # Reset state if row count changes
     if st.session_state.last_row_count != row_count_split:
         st.session_state.processed = False
         st.session_state.zip_buffer = None
 
-    st.session_state.last_row_count = row_count_split  # Update the last row count
+    st.session_state.last_row_count = row_count_split
 
     try:
         file_extension = os.path.splitext(file.name)[1].lower()
-        if file_extension == '.csv' or file_extension == '.txt':
-            # Estimate the total number of rows for CSV/TXT files
+        if file_extension in ['.csv', '.txt']:
+            # Read a sample to detect encoding
             file.seek(0)
-            total_rows = sum(1 for _ in file) - 1  # Subtract 1 for the header row
-            file.seek(0)  # Reset file pointer
+            sample = file.read(min(file.size, 100000))
+            file.seek(0)
+
+            # Detect encoding
+            result = chardet.detect(sample)
+            detected_encoding = result['encoding']
+            confidence = result['confidence']
+
+            # If confidence is low or encoding is None, try common encodings
+            if confidence < 0.8 or detected_encoding is None:
+                encodings_to_try = ['utf-8-sig', 'utf-16', 'utf-16le', 'utf-16be', 'latin1', 'iso-8859-1']
+                for encoding in encodings_to_try:
+                    try:
+                        file.seek(0)
+                        pd.read_csv(file, nrows=5, encoding=encoding)
+                        detected_encoding = encoding
+                        break
+                    except:
+                        continue
+                else:
+                    detected_encoding = 'utf-8'  # Default fallback
+
+            # Count total rows
+            file.seek(0)
+            total_rows = sum(1 for _ in pd.read_csv(
+                file,
+                encoding=detected_encoding,
+                chunksize=8192,
+                on_bad_lines='skip'
+            )) - 1
+            file.seek(0)
+
             num_files = (total_rows + row_count_split - 1) // row_count_split
             st.write(f"Number of files to be created: {num_files}")
 
-            # Add a button to confirm and start processing
             if st.button("Confirm and Split File"):
                 st.write("Splitting file... this might take some time")
                 progress_bar = st.progress(0)
 
-                # Read and process the file in chunks
-                reader = pd.read_csv(file, chunksize=row_count_split)
                 zip_buffer = BytesIO()
                 with ZipFile(zip_buffer, 'w') as zip_file:
+                    reader = pd.read_csv(
+                        file,
+                        chunksize=row_count_split,
+                        encoding=detected_encoding,
+                        on_bad_lines='skip'
+                    )
+
                     for i, chunk in enumerate(reader):
                         buffer = BytesIO()
-                        chunk.to_csv(buffer, index=False)
+                        chunk.to_csv(
+                            buffer,
+                            index=False,
+                            encoding=detected_encoding,
+                            line_terminator='\n'
+                        )
                         buffer.seek(0)
                         filename = f"split_file_{i+1}{file_extension}"
                         zip_file.writestr(filename, buffer.getvalue())
+                        buffer.close()
                         progress_bar.progress((i + 1) / num_files)
-                zip_buffer.seek(0)
 
-                # Store the ZIP file in session state
+                zip_buffer.seek(0)
                 st.session_state.processed = True
                 st.session_state.zip_buffer = zip_buffer
 
@@ -100,7 +139,6 @@ if file is not None:
             num_files = (total_rows + row_count_split - 1) // row_count_split
             st.write(f"Number of files to be created: {num_files}")
 
-            # Add a button to confirm and start processing
             if st.button("Confirm and Split File"):
                 st.write("Splitting file... this might take some time")
                 progress_bar = st.progress(0)
@@ -118,7 +156,6 @@ if file is not None:
                         total_rows_processed += 1
 
                         if len(row_buffer) == row_count_split or total_rows_processed == total_rows:
-                            # Write chunk to a new XLSX file
                             chunk_wb = Workbook()
                             chunk_ws = chunk_wb.active
                             chunk_ws.append(header)
@@ -141,7 +178,6 @@ if file is not None:
                 wb.close()
                 os.remove(tmp_input_file_path)
 
-                # Store the ZIP file in session state
                 st.session_state.processed = True
                 st.session_state.zip_buffer = zip_buffer
 
@@ -160,7 +196,6 @@ if file is not None:
             num_files = (total_rows + row_count_split - 1) // row_count_split
             st.write(f"Number of files to be created: {num_files}")
 
-            # Add a button to confirm and start processing
             if st.button("Confirm and Split File"):
                 st.write("Splitting file... this might take some time")
                 progress_bar = st.progress(0)
@@ -194,7 +229,6 @@ if file is not None:
                         filename = f"split_file_{file_index}{file_extension}"
                         zip_file.writestr(filename, buffer.getvalue())
                         buffer.close()
-                        # xlwt.Workbook doesn't have release_resources() method
 
                         file_index += 1
                         progress_bar.progress(total_rows_processed / total_rows)
@@ -203,7 +237,6 @@ if file is not None:
                 wb.release_resources()
                 os.remove(tmp_input_file_path)
 
-                # Store the ZIP file in session state
                 st.session_state.processed = True
                 st.session_state.zip_buffer = zip_buffer
 
