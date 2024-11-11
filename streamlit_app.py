@@ -1,303 +1,256 @@
 import csv
-import math  # For calculations
-import os  # Added to handle file extensions
+import math
+import os
 from io import BytesIO
 from zipfile import ZipFile
 
 import chardet
 import pandas as pd
 import streamlit as st
-import xlrd  # For reading .xls files
-import xlwt  # For writing .xls files
-from openpyxl import Workbook, load_workbook  # For XLSX processing
+import xlrd
+import xlwt
+from openpyxl import Workbook, load_workbook
 
-# Initialize session state if not already initialized
-if 'processed' not in st.session_state:
-    st.session_state.processed = False
-if 'zip_buffer' not in st.session_state:
-    st.session_state.zip_buffer = None
-if 'last_row_count' not in st.session_state:
-    st.session_state.last_row_count = None
-if 'uploaded_file_name' not in st.session_state:
-    st.session_state.uploaded_file_name = None  # Initialize uploaded file name
+def count_rows(file, file_extension):
+    """Count actual data rows (excluding header) for different file formats."""
+    file.seek(0)
+    try:
+        if file_extension in ['.csv', '.txt']:
+            total_lines = sum(1 for _ in file)
+            return total_lines - 1  # Exclude header
+        elif file_extension == '.xlsx':
+            wb = load_workbook(filename=BytesIO(file.read()), read_only=True)
+            ws = wb.active
+            total_rows = ws.max_row - 1  # Exclude header
+            wb.close()
+            return total_rows
+        elif file_extension == '.xls':
+            wb = xlrd.open_workbook(file_contents=file.read())
+            sheet = wb.sheet_by_index(0)
+            total_rows = sheet.nrows - 1  # Exclude header
+            wb.release_resources()
+            return total_rows
+        else:
+            raise ValueError("Unsupported file format")
+    finally:
+        file.seek(0)
 
-# App title
-st.title("File Splitter")
+def main():
+    st.title("File Splitter")
 
-# File uploader
-file = st.file_uploader(
-    "Choose a CSV, XLSX, XLS, or TXT file - WARNING: Large Files May Take Longer to Load.",
-    type=['csv', 'xlsx', 'xls', 'txt']
-)
-
-if file is not None:
-    # Check if the uploaded file is different from the previous one
-    if st.session_state.uploaded_file_name != file.name:
-        # Reset session state if a new file is uploaded
+    # Initialize session state
+    if 'processed' not in st.session_state:
         st.session_state.processed = False
+    if 'zip_buffer' not in st.session_state:
         st.session_state.zip_buffer = None
-        st.session_state.uploaded_file_name = file.name
+    if 'last_row_count' not in st.session_state:
+        st.session_state.last_row_count = None
+    if 'uploaded_file_name' not in st.session_state:
+        st.session_state.uploaded_file_name = None
 
-    # Prompt for desired row count
-    row_count_split = st.number_input(
-        "Enter the number of rows to split the file by",
-        min_value=1,
-        value=800000,
-        key="row_count"
+    file = st.file_uploader(
+        "Choose a CSV, XLSX, XLS, or TXT file - WARNING: Large Files May Take Longer to Load.",
+        type=['csv', 'xlsx', 'xls', 'txt']
     )
 
-    # Reset session state if a new row count is entered
-    if st.session_state.last_row_count is not None and st.session_state.last_row_count != row_count_split:
-        st.session_state.processed = False
-        st.session_state.zip_buffer = None
-
-    st.session_state.last_row_count = row_count_split  # Update the last row count
-
-    # Determine file extension
-    file_extension = os.path.splitext(file.name)[1].lower()
-
-    if file_extension == '.csv' or file_extension == '.txt':
+    if file is not None:
         try:
-            # Read a sample to detect encoding and CSV format
-            file.seek(0)
-            sample_size = 100000  # Read first 100 KB for encoding detection and format sniffing
-            sample = file.read(sample_size)
-            file.seek(0)  # Reset file pointer after reading sample
+            # Reset state if new file
+            if st.session_state.uploaded_file_name != file.name:
+                st.session_state.processed = False
+                st.session_state.zip_buffer = None
+                st.session_state.uploaded_file_name = file.name
 
-            # Detect encoding
-            result = chardet.detect(sample)
-            detected_encoding = result['encoding']
-            confidence = result['confidence']
+            row_count_split = st.number_input(
+                "Enter the number of rows to split the file by",
+                min_value=1,
+                value=800000,
+                key="row_count"
+            )
 
-            # If confidence is low or encoding is None, set a default encoding
-            if confidence < 0.8 or detected_encoding is None:
-                detected_encoding = 'utf-8'
+            # Reset state if row count changes
+            if st.session_state.last_row_count != row_count_split:
+                st.session_state.processed = False
+                st.session_state.zip_buffer = None
 
-            # Decode sample for CSV sniffer
-            try:
-                sample_str = sample.decode(detected_encoding)
-            except UnicodeDecodeError:
-                detected_encoding = 'utf-8'
-                sample_str = sample.decode(detected_encoding, errors='replace')
+            st.session_state.last_row_count = row_count_split
 
-            # Use CSV sniffer to detect delimiter and other parameters
-            sniffer = csv.Sniffer()
-            dialect = sniffer.sniff(sample_str)
+            file_extension = os.path.splitext(file.name)[1].lower()
 
-            delimiter = dialect.delimiter
+            # Get accurate row count excluding header
+            data_rows = count_rows(file, file_extension)
 
-            # Estimate the number of files
-            file.seek(0)
-            total_rows = sum(1 for _ in file) - 1  # Subtract 1 for the header row
-            file.seek(0)  # Reset file pointer
-            num_files = (total_rows + row_count_split - 1) // row_count_split
+            # Adjust the number of files calculation
+            if data_rows % row_count_split == 0:
+                num_files = data_rows // row_count_split
+            else:
+                num_files = (data_rows // row_count_split) + 1
+
             st.write(f"Number of files to be created: {num_files}")
 
-            # Add a button to confirm and start processing
             if st.button("Confirm and Split File"):
                 st.write("Splitting file... this might take some time")
-                zip_buffer = BytesIO()
-                with ZipFile(zip_buffer, 'w') as zip_file:
-                    try:
-                        reader = pd.read_csv(
-                            file,
-                            chunksize=row_count_split,
-                            encoding=detected_encoding,
-                            sep=delimiter,
-                            engine='python',  # Use python engine for better compatibility
-                            on_bad_lines='warn',
-                            dtype=str  # Read all columns as strings to preserve data
-                        )
-                    except Exception as e:
-                        st.error(f"Failed to read the file: {e}")
-                        st.stop()
+                progress_bar = st.progress(0)
 
-                    # Process chunks
-                    progress_bar = st.progress(0)
-                    total_chunks = num_files  # Use the estimated number of files
-                    for i, chunk in enumerate(reader):
-                        buffer = BytesIO()
-                        # Add BOM for UTF-16 encoding
-                        if detected_encoding.lower() in ['utf-16', 'utf-16-le', 'utf-16-be']:
-                            # Use 'utf-16' which automatically adds BOM
-                            chunk.to_csv(
-                                buffer,
-                                index=False,
+                if file_extension in ['.csv', '.txt']:
+                    try:
+                        # Detect encoding and delimiter
+                        sample = file.read(100000)
+                        file.seek(0)
+                        result = chardet.detect(sample)
+                        detected_encoding = result['encoding'] if result['confidence'] > 0.8 else 'utf-8'
+                        sample_str = sample.decode(detected_encoding, errors='replace')
+                        delimiter = csv.Sniffer().sniff(sample_str).delimiter
+
+                        zip_buffer = BytesIO()
+                        with ZipFile(zip_buffer, 'w') as zip_file:
+                            reader = pd.read_csv(
+                                file,
+                                chunksize=row_count_split,
                                 encoding=detected_encoding,
                                 sep=delimiter,
-                                lineterminator='\n'
+                                engine='python',
+                                on_bad_lines='warn',
+                                dtype=str
                             )
-                        else:
-                            # For other encodings
-                            chunk.to_csv(
-                                buffer,
-                                index=False,
-                                encoding=detected_encoding,
-                                sep=delimiter,
-                                lineterminator='\n'
-                            )
-                        buffer.seek(0)
-                        filename = f"split_file_{i+1}{file_extension}"
-                        zip_file.writestr(filename, buffer.read())
-                        progress_bar.progress((i + 1) / total_chunks)
-                    st.session_state.processed = True
-                    st.session_state.zip_buffer = zip_buffer
+
+                            total_chunks = num_files
+                            for i, chunk in enumerate(reader):
+                                buffer = BytesIO()
+                                chunk.to_csv(
+                                    buffer,
+                                    index=False,
+                                    encoding=detected_encoding,
+                                    sep=delimiter,
+                                    lineterminator='\n'
+                                )
+                                buffer.seek(0)
+                                filename = f"split_file_{i+1}{file_extension}"
+                                zip_file.writestr(filename, buffer.read())
+                                progress = (i + 1) / total_chunks
+                                progress_bar.progress(min(progress, 1.0))
+                    except Exception as e:
+                        st.error(f"Error processing CSV/TXT file: {e}")
+                        return
+
+                elif file_extension == '.xlsx':
+                    try:
+                        wb = load_workbook(filename=BytesIO(file.read()), read_only=True)
+                        ws = wb.active
+                        header = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+
+                        zip_buffer = BytesIO()
+                        with ZipFile(zip_buffer, 'w') as zip_file:
+                            row_buffer = []
+                            file_index = 1
+                            rows_processed = 0
+                            total_rows_processed = 0
+
+                            for row in ws.iter_rows(min_row=2, values_only=True):
+                                row_buffer.append(row)
+                                rows_processed += 1
+                                total_rows_processed += 1
+
+                                if rows_processed == row_count_split or total_rows_processed == data_rows:
+                                    chunk_wb = Workbook()
+                                    chunk_ws = chunk_wb.active
+                                    chunk_ws.append(header)
+                                    for data_row in row_buffer:
+                                        chunk_ws.append(data_row)
+
+                                    buffer = BytesIO()
+                                    chunk_wb.save(buffer)
+                                    buffer.seek(0)
+                                    filename = f"split_file_{file_index}{file_extension}"
+                                    zip_file.writestr(filename, buffer.read())
+                                    buffer.close()
+                                    chunk_wb.close()
+
+                                    row_buffer = []
+                                    rows_processed = 0
+                                    file_index += 1
+                                    progress = total_rows_processed / data_rows
+                                    progress_bar.progress(min(progress, 1.0))
+
+                        wb.close()
+
+                    except Exception as e:
+                        st.error(f"Error processing XLSX file: {e}")
+                        return
+
+                elif file_extension == '.xls':
+                    try:
+                        if row_count_split > 65536:
+                            st.warning("Row count exceeds maximum for .xls (65,536 rows). Adjusting to 65,536.")
+                            row_count_split = 65536
+
+                        wb = xlrd.open_workbook(file_contents=file.read())
+                        sheet = wb.sheet_by_index(0)
+                        header = sheet.row_values(0)
+
+                        zip_buffer = BytesIO()
+                        with ZipFile(zip_buffer, 'w') as zip_file:
+                            row_buffer = []
+                            file_index = 1
+                            rows_processed = 0
+                            total_rows_processed = 0
+
+                            for row_idx in range(1, sheet.nrows):
+                                row_values = sheet.row_values(row_idx)
+                                row_buffer.append(row_values)
+                                rows_processed += 1
+                                total_rows_processed += 1
+
+                                if rows_processed == row_count_split or total_rows_processed == data_rows:
+                                    chunk_wb = xlwt.Workbook()
+                                    chunk_ws = chunk_wb.add_sheet('Sheet1')
+
+                                    # Write header
+                                    for col_num, value in enumerate(header):
+                                        chunk_ws.write(0, col_num, value)
+
+                                    # Write data rows
+                                    for row_num, data_row in enumerate(row_buffer, 1):
+                                        for col_num, value in enumerate(data_row):
+                                            chunk_ws.write(row_num, col_num, value)
+
+                                    buffer = BytesIO()
+                                    chunk_wb.save(buffer)
+                                    buffer.seek(0)
+                                    filename = f"split_file_{file_index}{file_extension}"
+                                    zip_file.writestr(filename, buffer.read())
+                                    buffer.close()
+
+                                    row_buffer = []
+                                    rows_processed = 0
+                                    file_index += 1
+                                    progress = total_rows_processed / data_rows
+                                    progress_bar.progress(min(progress, 1.0))
+
+                        wb.release_resources()
+
+                    except Exception as e:
+                        st.error(f"Error processing XLS file: {e}")
+                        return
+
+                else:
+                    st.error("Unsupported file format")
+                    return
+
+                st.session_state.processed = True
+                st.session_state.zip_buffer = zip_buffer
                 zip_buffer.seek(0)
 
         except Exception as e:
-            st.error(f"Error processing file: {e}")
+            st.error(f"An error occurred during file splitting: {e}")
 
-    elif file_extension == '.xls':
-        # Handle XLS files
-        try:
-            # Ensure row_count_split does not exceed 65,536
-            if row_count_split > 65536:
-                st.warning("Row count exceeds the maximum allowed for .xls files (65,536 rows). Adjusting to 65,536.")
-                row_count_split = 65536
+    if st.session_state.processed and st.session_state.zip_buffer is not None:
+        st.download_button(
+            label="Download All Split Files",
+            data=st.session_state.zip_buffer.getvalue(),
+            file_name="split_files.zip",
+            mime='application/zip'
+        )
 
-            # Read the file content once
-            file.seek(0)
-            file_content = file.read()
-
-            # Open the workbook
-            wb = xlrd.open_workbook(file_contents=file_content, on_demand=True)
-            sheet = wb.sheet_by_index(0)  # Get the first sheet
-
-            total_rows = sheet.nrows - 1  # Exclude header row
-            num_files = math.ceil(total_rows / row_count_split)
-            st.write(f"Number of files to be created: {num_files}")
-
-            # Add a button to confirm and start processing
-            if st.button("Confirm and Split File"):
-                st.write("Splitting file... this might take some time")
-                progress_bar = st.progress(0)
-
-                zip_buffer = BytesIO()
-                with ZipFile(zip_buffer, 'w') as zip_file:
-                    row_buffer = []
-                    file_index = 1
-                    rows_processed = 0
-                    total_rows_processed = 0
-
-                    for row_idx in range(1, sheet.nrows):  # Start from 1 to skip header
-                        row_values = sheet.row_values(row_idx)
-                        row_buffer.append(row_values)
-                        rows_processed += 1
-                        total_rows_processed += 1
-
-                        if rows_processed == row_count_split or total_rows_processed == total_rows:
-                            # Write the chunk to a new XLS file
-                            chunk_wb = xlwt.Workbook()
-                            chunk_ws = chunk_wb.add_sheet('Sheet1')
-
-                            # Write header
-                            header = sheet.row_values(0)
-                            for col_num, header_value in enumerate(header):
-                                chunk_ws.write(0, col_num, header_value)
-
-                            # Write data rows
-                            for row_num, data_row in enumerate(row_buffer, start=1):
-                                for col_num, cell_value in enumerate(data_row):
-                                    chunk_ws.write(row_num, col_num, cell_value)
-
-                            # Save to a BytesIO buffer
-                            buffer = BytesIO()
-                            chunk_wb.save(buffer)
-                            buffer.seek(0)
-                            filename = f"split_file_{file_index}{file_extension}"
-                            zip_file.writestr(filename, buffer.read())
-                            buffer.close()
-                            # Reset row buffer and counters
-                            row_buffer = []
-                            rows_processed = 0
-                            file_index += 1
-                            progress_bar.progress(total_rows_processed / total_rows)
-                    zip_buffer.seek(0)
-                wb.release_resources()
-                del wb  # Cleanup
-
-                # Store the ZIP file in session state
-                st.session_state.processed = True
-                st.session_state.zip_buffer = zip_buffer
-
-        except Exception as e:
-            st.error(f"Error processing file: {e}")
-
-    elif file_extension == '.xlsx':
-        # Handle XLSX files
-        try:
-            # Read the file content once
-            file.seek(0)
-            file_content = file.read()
-
-            # Open the workbook
-            wb = load_workbook(filename=BytesIO(file_content), read_only=True)
-            ws = wb.active  # Get the active sheet
-
-            total_rows = ws.max_row - 1  # Exclude header row
-            num_files = math.ceil(total_rows / row_count_split)
-            st.write(f"Number of files to be created: {num_files}")
-
-            # Add a button to confirm and start processing
-            if st.button("Confirm and Split File"):
-                st.write("Splitting file... this might take some time")
-                progress_bar = st.progress(0)
-
-                zip_buffer = BytesIO()
-                with ZipFile(zip_buffer, 'w') as zip_file:
-                    row_buffer = []
-                    file_index = 1
-                    rows_processed = 0
-                    total_rows_processed = 0
-
-                    # Read header row
-                    header = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
-
-                    # Start from second row to skip header
-                    for row in ws.iter_rows(min_row=2, values_only=True):
-                        row_buffer.append(row)
-                        rows_processed += 1
-                        total_rows_processed += 1
-
-                        if rows_processed == row_count_split or total_rows_processed == total_rows:
-                            # Write the chunk to a new XLSX file
-                            chunk_wb = Workbook()
-                            chunk_ws = chunk_wb.active
-                            # Write header
-                            chunk_ws.append(header)
-                            for data_row in row_buffer:
-                                chunk_ws.append(data_row)
-                            # Save to a BytesIO buffer
-                            buffer = BytesIO()
-                            chunk_wb.save(buffer)
-                            buffer.seek(0)
-                            filename = f"split_file_{file_index}{file_extension}"
-                            zip_file.writestr(filename, buffer.read())
-                            buffer.close()
-                            chunk_wb.close()  # Close the workbook
-                            # Reset row buffer and counters
-                            row_buffer = []
-                            rows_processed = 0
-                            file_index += 1
-                            progress_bar.progress(total_rows_processed / total_rows)
-                    zip_buffer.seek(0)
-                wb.close()
-
-                # Store the ZIP file in session state
-                st.session_state.processed = True
-                st.session_state.zip_buffer = zip_buffer
-
-        except Exception as e:
-            st.error(f"Error processing file: {e}")
-
-    else:
-        st.error("Unsupported file format")
-
-# Check if the files have been processed and display the download button
-if st.session_state.processed:
-    st.download_button(
-        label="Download All Split Files",
-        data=st.session_state.zip_buffer.getvalue(),
-        file_name="split_files.zip",
-        mime='application/zip'
-    )
+if __name__ == "__main__":
+    main()
