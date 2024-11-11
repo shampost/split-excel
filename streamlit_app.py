@@ -1,15 +1,14 @@
-import streamlit as st
-import pandas as pd
-import csv
-import chardet
 import os
-import math
+import tempfile
 from io import BytesIO
 from zipfile import ZipFile
-from openpyxl import load_workbook, Workbook
+
+import chardet
+import pandas as pd
+import streamlit as st
 import xlrd
 import xlwt
-import tempfile
+from openpyxl import Workbook, load_workbook
 
 # Initialize session state if not already initialized
 if 'processed' not in st.session_state:
@@ -58,7 +57,7 @@ if file is not None:
         if file_extension in ['.csv', '.txt']:
             # Read a sample to detect encoding
             file.seek(0)
-            sample = file.read(min(file.size, 100000))
+            sample = file.read(min(file.size, 10000))
             file.seek(0)
 
             # Detect encoding
