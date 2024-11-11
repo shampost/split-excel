@@ -112,7 +112,7 @@ if file is not None:
                             buffer,
                             index=False,
                             encoding=detected_encoding,
-                            line_terminator='\n'
+                            lineterminator='\n'  # Fixed parameter name
                         )
                         buffer.seek(0)
                         filename = f"split_file_{i+1}{file_extension}"
