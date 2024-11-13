@@ -84,7 +84,7 @@ if file is not None:
             total_rows = sum(1 for _ in pd.read_csv(
                 file,
                 encoding=detected_encoding,
-                chunksize=100000,
+                chunksize=500000,
                 on_bad_lines='skip'
             )) - 1
             file.seek(0)
